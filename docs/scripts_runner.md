@@ -288,7 +288,7 @@ In appearance transfer, the `--src_path` is the followings:
 Besides, in human appearance transfer, it is better to name the `--model_id` as `name1+name2`. The reason is that in the personalization stage,
 we will fine tune the model on both `name1` and `name2`, which means the personalized model is used for `name1` and `name2`. Therefore, 
 it is better to rename the `--model_id` as a name neither same to `name1` nor `name2`.
- 
+
 ## Human Appearance Transfer with Motion Imitation
 
 Here we denote 
@@ -403,3 +403,17 @@ python demo/appearance_transfer.py --gpu_ids 1 \
 | Demo 1                                                                                      | Demo 2                                                                                                             |
 |---------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
 | [![PaperVideo](https://img.youtube.com/vi/_oW1Ir1PCRE/0.jpg)](https://youtu.be/_oW1Ir1PCRE) | [![QualitativeResults](https://img.youtube.com/vi/xKHSC4i4RFc/0.jpg)](https://www.youtube.com/watch?v=xKHSC4i4RFc) |
+
+## Human Appearance Transfer for Garment Transfer
+Set the reference path the same as the primary source path to achieve garment transfer between two source images
+### A (head+lower) + B (upper) + C (= pose of A)
+```shell
+python demo/appearance_transfer.py --gpu_ids 1 \
+   --image_size 512 \
+   --num_source 2   \
+   --output_dir "./results" \
+   --assets_dir "./assets"  \
+   --model_id   "afan_6=ns=2+trump" \
+   --src_path   "path?=./assets/samples/sources/donald_trump_2/00000.PNG,name?=donald_trump_2,parts?=head-lower|path?=./assets/samples/sources/afan_6/afan_6=ns=2/IMG_7218.JPG,name?=afan_6=ns=2,parts?=upper" \
+   --ref_path   "path?=./assets/samples/sources/donald_trump_2/00000.PNG,name?=donald_trump_2"
+```

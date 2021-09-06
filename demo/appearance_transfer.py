@@ -7,18 +7,22 @@ import argparse
 import subprocess
 import sys
 import time
+import gc
 
 from iPERCore.services.options.options_setup import setup
 from iPERCore.services.run_imitator import run_imitator
+from iPERCore.services.run_swapper import run_swapper
 
 ###############################################################################################
 ##                   Setting
 ###############################################################################################
 parser = argparse.ArgumentParser()
+parser.add_argument("--dataset_name", type=str, default="Zalando_256_192", help="[Deepfashion_256_192 | Zalando_256_192 | Zalora_256_192")
+parser.add_argument("--dataset_range", type=str, default="0:582", help="[start_id:end:id)")
 parser.add_argument("--gpu_ids", type=str, default="0", help="the gpu ids.")
-parser.add_argument("--image_size", type=int, default=512, help="the image size.")
+parser.add_argument("--image_size", type=int, default=256, help="the image size.")
 parser.add_argument("--num_source", type=int, default=2, help="the number of sources.")
-parser.add_argument("--output_dir", type=str, default="./results", help="the output directory.")
+parser.add_argument("--output_dir", type=str, default="/mnt/date/zhaofuwei/Projects-warehouse/iPERCore/results_tryon_808", help="the output directory.")
 parser.add_argument("--assets_dir", type=str, default="./assets",
                     help="the assets directory. This is very important, and there are the configurations and "
                          "the all pre-trained checkpoints")
@@ -91,8 +95,8 @@ src_path_format = """the source input information.
 
 """
 
-parser.add_argument("--model_id", type=str, default=f"model_{str(time.time())}", help="the renamed model.")
-parser.add_argument("--src_path", type=str, required=True, help=src_path_format)
+parser.add_argument("--model_id", type=str, default="person_a+person_b", help="the renamed model.")
+parser.add_argument("--src_path", type=str, default = "path?=./tryon_data/a/fashionWOMENBlouses_Shirtsid0000092204_4full.jpg,name?=person_a,parts?=head-lower|path?=./tryon_data/b/fashionMENTees_Tanksid0000662101_4full.jpg,name?=person_b,parts?=upper", help=src_path_format)
 
 ref_path_format = """the reference input information. All reference paths. It supports multiple paths,
     and uses "|" as the separator between all paths.
@@ -137,7 +141,7 @@ ref_path_format = """the reference input information. All reference paths. It su
 
     5. "path1", this will be parsed as [{path: path1, fps: 25, pose_fc: 300, cam_fc: 150}].
 """
-parser.add_argument("--ref_path", type=str, default="", help=ref_path_format)
+parser.add_argument("--ref_path", type=str, default="path?=./tryon_data/a/fashionWOMENBlouses_Shirtsid0000092204_4full.jpg,name?=person_ref", help=ref_path_format)
 
 # args = parser.parse_args()
 args, extra_args = parser.parse_known_args()
@@ -151,22 +155,69 @@ if not os.path.exists(work_asserts_dir):
 args.cfg_path = osp.join(work_asserts_dir, "configs", "deploy.toml")
 
 if __name__ == "__main__":
-    # # run imitator
-    # cfg = setup(args)
-    # run_imitator(cfg)
+    # run swapper
+    dataset_root = '/mnt/date/xiezhy/Datasets'
+    # Deepfashion: 934, Zalando: 1746, Zalora: 4369
+    # (934 + 1746 + 4369) * 3min / 60 / 24 = 19.67 ~= 20 days
+    # Deepfashion划分为[0:467)[gpu0],[467,934)[gpu1]
+    # Zalando划分为[0:582)[gpu2],[582,1164)[gpu3],[1164,1746)[gpu4]
+    # Zalora划分为[0:728)[gpu5],[728:1456)[gpu0],[1456:2184)[gpu1],[2184:2912)[gpu2],[2912:3640)[gpu3],[3640:4369)[gpu5]
+    # 总共划分了11份，其中最多的单份是728，需要用时 728*3min/60/24 ~= 1.5 days，因此预计两日内可以全部完成
+    dataset_name = args.dataset_name
+    dataset_range = args.dataset_range
+    start_id, end_id = int(dataset_range.split(':')[0]), int(dataset_range.split(':')[1])
+    test_lines = open(os.path.join(dataset_root, dataset_name,'test_pairs_front_list_shuffle_0508.txt'), 'r')
+
+    output_root = args.output_dir
+    lines = test_lines.readlines()[start_id:end_id]
+    for i, test_line in enumerate(lines):
+        i += start_id
+        image_a_path = os.path.join(dataset_root, dataset_name, 'image', test_line.split(' ')[0])
+        image_b_path = os.path.join(dataset_root, dataset_name, 'image', test_line.split(' ')[1][:-1])
+
+        # output_dir = os.path.join(args.output_dir, dataset_name, image_a_path.split('/')[-1]+'+'+image_b_path.split('/')[-1])
+        args.output_dir = os.path.join(output_root, dataset_name, f'test_pair_{i}')
+        exist_check = os.path.join(args.output_dir,'primitives/person_a/synthesis/swappers/person_a+person_b-person_ref.mp4')
+        if not os.path.exists(exist_check):
+            os.makedirs(args.output_dir, exist_ok=True)
+            args.src_path = 'path?=' + image_a_path + ',name?=person_a,parts?=head-lower' + '|' + 'path?=' + image_b_path + ',name?=person_b,parts?=upper'
+            args.ref_path = 'path?=' + image_a_path + ',name?=person_ref'
+
+            # cfg = setup(args)
+            # all_meta_outputs = run_swapper(cfg)
+
+            cmd = [
+                sys.executable, "-m", "iPERCore.services.run_swapper",
+                "--cfg_path", args.cfg_path,
+                "--gpu_ids", args.gpu_ids,
+                "--image_size", str(args.image_size),
+                "--num_source", str(args.num_source),
+                "--output_dir", args.output_dir,
+                "--model_id", args.model_id,
+                "--src_path", args.src_path,
+                "--ref_path", args.ref_path
+            ]
+
+            cmd += extra_args
+            subprocess.call(cmd)
+
+        
+        print('*-'*50 + '*')
+        print(f'*- the {i}th test pair of ' + dataset_name + ' in range ' + '[' + dataset_range + ')' + ' has been processed sucessfully! -*')
+        print('*-'*50 + '*')
 
     # or use the system call wrapper
-    cmd = [
-        sys.executable, "-m", "iPERCore.services.run_swapper",
-        "--cfg_path", args.cfg_path,
-        "--gpu_ids", args.gpu_ids,
-        "--image_size", str(args.image_size),
-        "--num_source", str(args.num_source),
-        "--output_dir", args.output_dir,
-        "--model_id", args.model_id,
-        "--src_path", args.src_path,
-        "--ref_path", args.ref_path
-    ]
+    # cmd = [
+    #     sys.executable, "-m", "iPERCore.services.run_swapper",
+    #     "--cfg_path", args.cfg_path,
+    #     "--gpu_ids", args.gpu_ids,
+    #     "--image_size", str(args.image_size),
+    #     "--num_source", str(args.num_source),
+    #     "--output_dir", args.output_dir,
+    #     "--model_id", args.model_id,
+    #     "--src_path", args.src_path,
+    #     "--ref_path", args.ref_path
+    # ]
 
-    cmd += extra_args
-    subprocess.call(cmd)
+    # cmd += extra_args
+    # subprocess.call(cmd)
